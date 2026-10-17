@@ -26,7 +26,10 @@ jobs:
           txt = p.read_text()
           old = "DEFAULT_CONTEXT_SIZE    = 8192"
           assert old in txt, "El API nativo cambió: revisar versión"
-          p.write_text(txt.replace(old, "DEFAULT_CONTEXT_SIZE    = 2048"))
+          assert "stop_generation_position = current_position + user_prompt_size + n_predict;" in txt, "Límite de generación modificado por upstream"
+          txt = txt.replace(old, "DEFAULT_CONTEXT_SIZE    = 6144")
+          txt = txt.replace("stop_generation_position = current_position + user_prompt_size + n_predict;", "stop_generation_position = current_position + n_predict;")
+          p.write_text(txt)
           lib_gradle = Path("third_party/llama.cpp/examples/llama.android/lib/build.gradle.kts")
           config = lib_gradle.read_text()
           for before, after in [
@@ -68,6 +71,6 @@ jobs:
         run: gradle :app:assembleDebug --no-daemon --max-workers=4 --stacktrace
       - uses: actions/upload-artifact@v4
         with:
-          name: ChispaLocal-v0.2-Qwen-APK
+          name: ChispaLocal-v0.3-AnalisisLargo-APK
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
