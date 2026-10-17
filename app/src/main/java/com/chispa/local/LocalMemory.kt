@@ -49,7 +49,7 @@ class LocalMemory(ctx:Context):SQLiteOpenHelper(ctx,"chispa.db",null,2){
  }
  fun saveReminder(id:Int,due:Long,note:String){
   writableDatabase.execSQL("INSERT OR REPLACE INTO reminders(id,due,note,delivered) VALUES (?,?,?,0)",
-   arrayOf(id,due,note))
+   arrayOf<Any>(id,due,note))
  }
  fun markReminderDone(id:Int){
   writableDatabase.execSQL("UPDATE reminders SET delivered=1 WHERE id=?",arrayOf(id))
