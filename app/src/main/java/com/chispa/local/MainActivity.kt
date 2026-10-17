@@ -68,6 +68,7 @@ class MainActivity : Activity() {
     private lateinit var progressBar: ProgressBar
     private lateinit var modelState: TextView
     private lateinit var composeCount: TextView
+    private var welcomeView: View? = null
     private var generationJob: Job? = null
     private val BACKUP_REQUEST = 601
     private val RESTORE_REQUEST = 602
@@ -325,6 +326,7 @@ class MainActivity : Activity() {
                 topMargin = dp(4)
             })
         }
+        welcomeView = welcome
         history.addView(welcome, LinearLayout.LayoutParams(-1, -2).apply {
             setMargins(0, dp(8), 0, 0)
         })
@@ -434,6 +436,8 @@ class MainActivity : Activity() {
         }
         val deep = modelReady && analysisMode.isChecked
         entry.setText("")
+        welcomeView?.let { history.removeView(it) }
+        welcomeView = null
         val request = "Tú: " + msg
         addBubble(request)
         memory.addMessage(request)
@@ -447,7 +451,7 @@ class MainActivity : Activity() {
         val answerBubble = addBubble(if (deep) "Chispa: Analizando objetivos y condiciones..." else "Chispa: Pensando...")
         working = true
         modelButton.isEnabled = false
-        analysisMode.isEnabled = false
+        setGenerationUi(true)
         val begin = SystemClock.elapsedRealtime()
         generationJob = ui.launch {
             val output = StringBuilder()
@@ -468,7 +472,7 @@ class MainActivity : Activity() {
                         plan.append(part)
                     }
                     notes = plan.toString().take(1100)
-                    answerBubble.text = "Chispa: Preparando la respuesta..."
+                    displayAnswer(answerBubble, "Chispa: Preparando la respuesta...")
                 }
                 val finalPrompt = if (deep) {
                     """SOLICITUD ORIGINAL:
@@ -484,27 +488,27 @@ class MainActivity : Activity() {
                     output.append(chunk)
                     val now = SystemClock.elapsedRealtime()
                     if (now - updatedAt > 85L) {
-                        answerBubble.text = "Chispa: " + output.toString()
+                        displayAnswer(answerBubble, "Chispa: " + output.toString())
                         scroll.post { scroll.fullScroll(ScrollView.FOCUS_DOWN) }
                         updatedAt = now
                     }
                 }
                 val answer = output.toString().trim().ifEmpty { "No pude generar una respuesta." }
-                answerBubble.text = "Chispa: " + answer
+                displayAnswer(answerBubble, "Chispa: " + answer)
                 memory.addMessage("Chispa: " + answer)
                 status.text = "IA local • " + (if (deep) "Análisis" else "Normal") +
                     " • " + String.format(Locale.US, "%.1f s", (SystemClock.elapsedRealtime() - begin) / 1000.0) +
                     " • " + answer.length + " caracteres"
             } catch (e: CancellationException) {
-                answerBubble.text = "Chispa: Respuesta detenida."
+                displayAnswer(answerBubble, "Chispa: Respuesta detenida.")
                 status.text = "Respuesta detenida"
             } catch (e: Exception) {
-                answerBubble.text = "Chispa: Ocurrió un error al generar: " + (e.message ?: "desconocido")
+                displayAnswer(answerBubble, "Chispa: Ocurrió un error al generar: " + (e.message ?: "desconocido"))
                 status.text = "Error de generación. Intenta reiniciar el modelo."
             } finally {
                 working = false
                 generationJob = null
-                analysisMode.isEnabled = true
+                setGenerationUi(false)
                 modelButton.isEnabled = true
             }
         }
@@ -527,16 +531,34 @@ class MainActivity : Activity() {
     private fun refreshModelButton() {
         when {
             modelReady -> {
-                modelButton.text = "IA Qwen 1.5B activa • Sin internet"
+                modelButton.text = "IA activada · Lista para conversar"
                 modelButton.isEnabled = false
+                modelState.text = "CONECTADA"
+                modelState.setTextColor(ChispaUi.ACCENT)
+                progressBar.visibility = View.GONE
             }
             downloaded() -> {
-                modelButton.text = "Activar IA Qwen 1.5B (offline)"
+                modelButton.text = "Activar modelo en este dispositivo"
                 modelButton.isEnabled = !working
+                modelState.text = "INSTALADO"
+                modelState.setTextColor(ChispaUi.ACCENT)
+                progressBar.visibility = View.GONE
+                if (!working) status.text = "Modelo de ~1 GB disponible sin internet."
+            }
+            prefs().getLong("download_id", -1L) >= 0L -> {
+                modelButton.text = "Descarga en curso..."
+                modelButton.isEnabled = false
+                modelState.text = "DESCARGANDO"
+                modelState.setTextColor(ChispaUi.ACCENT)
+                progressBar.visibility = View.VISIBLE
             }
             else -> {
-                modelButton.text = "Descargar IA Qwen 1.5B (~1 GB, Wi-Fi)"
-                modelButton.isEnabled = true
+                modelButton.text = "Descargar Qwen 1.5B (~1 GB)"
+                modelButton.isEnabled = !working
+                modelState.text = "SIN MODELO"
+                modelState.setTextColor(ChispaUi.MUTED)
+                progressBar.visibility = View.GONE
+                if (!working) status.text = "Conéctate a Wi-Fi para instalar el modelo una sola vez."
             }
         }
     }
@@ -557,6 +579,7 @@ class MainActivity : Activity() {
             val id = dm.enqueue(request)
             prefs().edit().putLong("download_id", id).apply()
             status.text = "Descargando IA únicamente con Wi-Fi sin medición..."
+            refreshModelButton()
             watchDownload()
         } catch (e: Exception) {
             status.text = "No pude iniciar la descarga: " + e.message
@@ -581,8 +604,14 @@ class MainActivity : Activity() {
                         DownloadManager.STATUS_SUCCESSFUL -> {
                             prefs().edit().putBoolean("complete", true)
                                 .remove("download_id").apply()
-                            status.text = "Modelo descargado • Pulsa Activar IA"
-                            refreshModelButton()
+                            if (ModelVault.isPresent(this@MainActivity)) {
+                                status.text = "Descarga completa. Modelo listo para activar."
+                                refreshModelButton()
+                            } else {
+                                prefs().edit().putBoolean("complete", false).apply()
+                                status.text = "Descarga incompleta. Vuelve a intentarlo."
+                                refreshModelButton()
+                            }
                             return
                         }
                         DownloadManager.STATUS_FAILED -> {
@@ -593,7 +622,9 @@ class MainActivity : Activity() {
                         }
                         else -> {
                             val pct = if (total > 0L) (bytes * 100L / total).toInt().toString() + "%" else "..."
-                            modelButton.text = "Descargando modelo: " + pct
+                            modelButton.text = "Descargando Qwen · " + pct
+                            progressBar.visibility = View.VISIBLE
+                            if (total > 0L) progressBar.progress = (bytes * 100L / total).toInt().coerceIn(0, 100)
                             modelButton.isEnabled = false
                             status.text = "Descarga: " + (bytes / 1_000_000L) +
                                 " MB • Esperando Wi-Fi si está pausada"
@@ -614,7 +645,8 @@ class MainActivity : Activity() {
         }
         working = true
         modelButton.isEnabled = false
-        modelButton.text = "Cargando IA en memoria..."
+        modelButton.text = "Activando IA..."
+        modelState.text = "CARGANDO"
         status.text = "Preparando el motor local: puede tardar la primera vez"
         ui.launch {
             try {
