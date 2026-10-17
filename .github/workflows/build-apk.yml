@@ -1,7 +1,7 @@
-name: Compilar Chispa Android
+name: Comprobar compilacion Chispa
 on:
   push:
-    branches: [main]
+    branches: [main, integracion-v0.4]
   workflow_dispatch:
 permissions:
   contents: read
@@ -71,6 +71,6 @@ jobs:
         run: gradle :app:assembleDebug --no-daemon --max-workers=4 --stacktrace
       - uses: actions/upload-artifact@v4
         with:
-          name: ChispaLocal-v0.3-AnalisisLargo-APK
+          name: ChispaLocal-CI-v0.4-NO-INSTALAR
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
