@@ -19,6 +19,8 @@ import android.provider.Settings
 import android.view.Gravity
 import android.text.InputType
 import android.view.inputmethod.EditorInfo
+import android.content.ActivityNotFoundException
+import kotlinx.coroutines.CancellationException
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
@@ -54,6 +56,9 @@ class MainActivity : Activity() {
     private lateinit var modelButton: Button
     private lateinit var status: TextView
     private lateinit var analysisMode: CheckBox
+    private var generationJob: Job? = null
+    private val BACKUP_REQUEST = 601
+    private val RESTORE_REQUEST = 602
     private val ui = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val handler = Handler(Looper.getMainLooper())
     private var pollDownload: Runnable? = null
@@ -88,8 +93,8 @@ class MainActivity : Activity() {
             setTextColor(Color.WHITE)
             setPadding(dp(5), dp(4), dp(5), dp(7))
         }
-        root.addView(header("✦ CHISPA LOCAL  •  v0.3", 23f))
-        status = header("Qwen 1.5B • Contexto 6144 • Ideas largas", 12f)
+        root.addView(header("✦ CHISPA LOCAL  •  v0.4", 23f))
+        status = header("Qwen 1.5B • Memoria y herramientas locales", 12f)
         status.setTextColor(Color.rgb(103, 221, 221))
         root.addView(status)
         modelButton = Button(this).apply { setOnClickListener { onModelButton() } }
@@ -114,6 +119,20 @@ class MainActivity : Activity() {
             }
         }
         root.addView(analysisMode)
+        val manageRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        manageRow.addView(Button(this).apply {
+            text = "Respaldar GGUF"; textSize = 10f
+            setOnClickListener { backupModel() }
+        }, LinearLayout.LayoutParams(0, dp(48), 1f))
+        manageRow.addView(Button(this).apply {
+            text = "Restaurar GGUF"; textSize = 10f
+            setOnClickListener { restoreModel() }
+        }, LinearLayout.LayoutParams(0, dp(48), 1f))
+        manageRow.addView(Button(this).apply {
+            text = "Personalidad"; textSize = 10f
+            setOnClickListener { setPersonality() }
+        }, LinearLayout.LayoutParams(0, dp(48), 1f))
+        root.addView(manageRow)
         scroll = ScrollView(this)
         history = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -138,6 +157,10 @@ class MainActivity : Activity() {
             imeOptions = EditorInfo.IME_FLAG_NO_ENTER_ACTION
         }
         bottom.addView(entry, LinearLayout.LayoutParams(0, -2, 1f))
+        bottom.addView(Button(this).apply {
+            text = "Parar"
+            setOnClickListener { generationJob?.cancel() }
+        })
         bottom.addView(Button(this).apply {
             text = "Enviar"
             setOnClickListener { send() }
@@ -199,13 +222,13 @@ class MainActivity : Activity() {
                 .setPositiveButton("Entendido", null).show()
             return
         }
-        val deep = modelReady && (analysisMode.isChecked || msg.length >= 500)
+        val deep = modelReady && analysisMode.isChecked
         entry.setText("")
         val request = "Tú: " + msg
         addBubble(request)
         memory.addMessage(request)
-        if (!modelReady || localCommand(msg)) {
-            val reply = "Chispa: " + Rules.respond(this, memory, msg)
+        if (!modelReady || LocalCommands.isCommand(msg)) {
+            val reply = "Chispa: " + LocalCommands.run(this, memory, msg)
             addBubble(reply)
             memory.addMessage(reply)
             return
@@ -216,7 +239,7 @@ class MainActivity : Activity() {
         modelButton.isEnabled = false
         analysisMode.isEnabled = false
         val begin = SystemClock.elapsedRealtime()
-        ui.launch {
+        generationJob = ui.launch {
             val output = StringBuilder()
             var updatedAt = 0L
             try {
@@ -231,21 +254,23 @@ class MainActivity : Activity() {
                         |
                         |SOLICITUD:
                         |$msg""".trimMargin()
-                    ai.sendUserPrompt(analysisPrompt, predictLength = 224).collect { part ->
+                    ai.sendUserPrompt(analysisPrompt, predictLength = 128).collect { part ->
                         plan.append(part)
                     }
-                    notes = plan.toString().take(1600)
+                    notes = plan.toString().take(1100)
                     answerBubble.text = "Chispa: Preparando la respuesta..."
                 }
                 val finalPrompt = if (deep) {
-                    """Responde ahora a la solicitud original, sin omitir ningún requisito.
+                    """SOLICITUD ORIGINAL:
+                       |$msg
+                       |Responde ahora a la solicitud original, sin omitir ningún requisito.
                        |Revisa tus cálculos y condiciones. Si no estás seguro, dilo.
                        |Presenta una solución ordenada con explicaciones útiles.
                        |Apóyate en estas notas de análisis:
                        |$notes""".trimMargin()
                 } else msg
                 status.text = if (deep) "Paso 2/2 • Desarrollando idea..." else "Generando respuesta..."
-                ai.sendUserPrompt(finalPrompt, predictLength = if (deep) 544 else 320).collect { chunk ->
+                ai.sendUserPrompt(finalPrompt, predictLength = if (deep) 352 else 224).collect { chunk ->
                     output.append(chunk)
                     val now = SystemClock.elapsedRealtime()
                     if (now - updatedAt > 85L) {
@@ -260,11 +285,15 @@ class MainActivity : Activity() {
                 status.text = "IA local • " + (if (deep) "Análisis" else "Normal") +
                     " • " + String.format(Locale.US, "%.1f s", (SystemClock.elapsedRealtime() - begin) / 1000.0) +
                     " • " + answer.length + " caracteres"
+            } catch (e: CancellationException) {
+                answerBubble.text = "Chispa: Respuesta detenida."
+                status.text = "Respuesta detenida"
             } catch (e: Exception) {
                 answerBubble.text = "Chispa: Ocurrió un error al generar: " + (e.message ?: "desconocido")
                 status.text = "Error de generación. Intenta reiniciar el modelo."
             } finally {
                 working = false
+                generationJob = null
                 analysisMode.isEnabled = true
                 modelButton.isEnabled = true
             }
@@ -398,7 +427,9 @@ class MainActivity : Activity() {
                             "Eres Chispa, un compañero digital original que vive en un teléfono Android. " +
                             "Responde en español, con naturalidad y claridad. " +
                             "No inventes permisos ni afirmes que ejecutaste acciones del sistema. " +
-                            "Si no sabes algo, dilo. Responde de forma breve salvo que te pidan detalles."
+                            "Si no sabes algo, dilo. Responde de forma breve salvo que te pidan detalles. " +
+                            "Personalidad elegida: " + prefs().getString("personality", "Cordial y claro").orEmpty().take(220) +
+                            ". Memoria de notas y conversaciones previas: " + memory.memoriesForPrompt().take(1500)
                         )
                     }
                 }
@@ -413,6 +444,80 @@ class MainActivity : Activity() {
                 refreshModelButton()
             }
         }
+    }
+
+
+    private fun backupModel() {
+        if (!ModelVault.isPresent(this)) {
+            Toast.makeText(this, "No hay modelo completo para respaldar.", Toast.LENGTH_LONG).show()
+            return
+        }
+        val intent = Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "application/octet-stream"
+            putExtra(Intent.EXTRA_TITLE, ModelVault.NAME)
+        }
+        startActivityForResult(intent, BACKUP_REQUEST)
+    }
+
+    private fun restoreModel() {
+        if (working || modelReady) {
+            Toast.makeText(this, "Reabre Chispa sin activar la IA antes de restaurar.", Toast.LENGTH_LONG).show()
+            return
+        }
+        startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
+        }, RESTORE_REQUEST)
+    }
+
+    @Deprecated("Actividad Android mínima sin AndroidX")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        val uri = data?.data ?: return
+        if (resultCode != Activity.RESULT_OK || (requestCode != BACKUP_REQUEST && requestCode != RESTORE_REQUEST)) return
+        if (working) return
+        working = true
+        modelButton.isEnabled = false
+        status.text = "Copiando GGUF (~1 GB). Mantén la aplicación abierta."
+        ui.launch {
+            try {
+                val digest = if (requestCode == BACKUP_REQUEST) {
+                    ModelVault.backup(this@MainActivity, uri) { bytes ->
+                        handler.post { status.text = "Respaldo: " + (bytes / 1_000_000L) + " MB" }
+                    }
+                } else {
+                    ModelVault.restore(this@MainActivity, uri) { bytes ->
+                        handler.post { status.text = "Restauración: " + (bytes / 1_000_000L) + " MB" }
+                    }
+                }
+                if (requestCode == RESTORE_REQUEST)
+                    prefs().edit().putBoolean("complete", true).remove("download_id").apply()
+                status.text = "Copia terminada • SHA256 " + digest.take(12) + "..."
+            } catch (e: Exception) {
+                status.text = "Error al copiar: " + (e.message ?: "desconocido")
+            } finally {
+                working = false
+                refreshModelButton()
+            }
+        }
+    }
+
+    private fun setPersonality() {
+        val edit = EditText(this).apply {
+            setText(prefs().getString("personality", "Cordial y claro"))
+            setSingleLine(false)
+            minLines = 2
+            maxLines = 5
+        }
+        AlertDialog.Builder(this).setTitle("Personalidad de Chispa")
+            .setMessage("Se aplicará después de reiniciar el motor de IA.")
+            .setView(edit)
+            .setPositiveButton("Guardar") { _, _ ->
+                prefs().edit().putString("personality", edit.text.toString().take(220)).apply()
+                status.text = "Personalidad guardada • reinicia el motor para aplicarla"
+            }
+            .setNegativeButton("Cancelar", null).show()
     }
 
     private fun startOverlay() {
