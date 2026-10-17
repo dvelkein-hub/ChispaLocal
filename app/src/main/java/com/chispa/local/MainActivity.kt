@@ -1,6 +1,13 @@
 package com.chispa.local
 
 import android.Manifest
+import android.text.Editable
+import android.text.TextWatcher
+import android.view.View
+import android.view.WindowManager
+import android.widget.ProgressBar
+import android.widget.FrameLayout
+import android.content.res.ColorStateList
 import android.app.Activity
 import android.app.AlertDialog
 import android.app.DownloadManager
@@ -56,6 +63,11 @@ class MainActivity : Activity() {
     private lateinit var modelButton: Button
     private lateinit var status: TextView
     private lateinit var analysisMode: CheckBox
+    private lateinit var stopButton: Button
+    private lateinit var sendButton: Button
+    private lateinit var progressBar: ProgressBar
+    private lateinit var modelState: TextView
+    private lateinit var composeCount: TextView
     private var generationJob: Job? = null
     private val BACKUP_REQUEST = 601
     private val RESTORE_REQUEST = 602
@@ -82,119 +94,183 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         memory = LocalMemory(this)
-        window.statusBarColor = Color.rgb(8, 18, 35)
+        window.statusBarColor = ChispaUi.BACKGROUND
+        window.navigationBarColor = ChispaUi.BACKGROUND
+        window.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(13), dp(13), dp(13), dp(8))
-            setBackgroundColor(Color.rgb(8, 18, 35))
+            setBackgroundColor(ChispaUi.BACKGROUND)
         }
         setContentView(root)
-        fun header(text: String, size: Float): TextView = TextView(this).apply {
-            this.text = text
-            textSize = size
-            setTextColor(Color.WHITE)
-            setPadding(dp(5), dp(4), dp(5), dp(7))
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(16), dp(17), dp(14), dp(11))
         }
-        root.addView(header("✦ CHISPA LOCAL  •  v0.4", 23f))
-        status = header("Qwen 1.5B • Memoria y herramientas locales", 12f)
-        status.setTextColor(Color.rgb(103, 221, 221))
-        root.addView(status)
-        modelButton = Button(this).apply { setOnClickListener { onModelButton() } }
-        root.addView(modelButton)
-        val buttons = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        buttons.addView(Button(this).apply {
-            text = "Mostrar flotante"
-            setOnClickListener { startOverlay() }
-        }, LinearLayout.LayoutParams(0, dp(52), 1f))
-        buttons.addView(Button(this).apply {
-            text = "Ocultar"
-            setOnClickListener { stopService(Intent(this@MainActivity, OverlayService::class.java)) }
-        }, LinearLayout.LayoutParams(0, dp(52), 1f))
-        root.addView(buttons)
+        root.addView(header)
+        val avatar = ChispaUi.avatar(this).apply {
+            contentDescription = "Personaje de Chispa"
+        }
+        header.addView(avatar, LinearLayout.LayoutParams(dp(48), dp(48)))
+        val titles = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), 0, 0, 0)
+        }
+        titles.addView(ChispaUi.label(this, "Chispa", 23f, ChispaUi.TEXT, true))
+        titles.addView(ChispaUi.label(this, "Asistente local  •  v0.5", 12f, ChispaUi.MUTED))
+        header.addView(titles, LinearLayout.LayoutParams(0, -2, 1f))
+        val menuButton = ChispaUi.button(this, "☰").apply {
+            textSize = 19f
+            contentDescription = "Abrir menú y herramientas"
+            setOnClickListener { showToolsMenu() }
+        }
+        header.addView(menuButton, LinearLayout.LayoutParams(dp(50), dp(47)))
+
+        val modelCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(13), dp(14), dp(12))
+            background = ChispaUi.background(this@MainActivity, ChispaUi.SURFACE, 18, true)
+        }
+        root.addView(modelCard, LinearLayout.LayoutParams(-1, -2).apply {
+            setMargins(dp(14), dp(3), dp(14), dp(11))
+        })
+        val top = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        top.addView(ChispaUi.label(this, "MOTOR LOCAL  ·  QWEN 1.5B", 11f, ChispaUi.MUTED, true),
+            LinearLayout.LayoutParams(0, -2, 1f))
+        modelState = ChispaUi.label(this, "SIN ACTIVAR", 10f, ChispaUi.ACCENT, true)
+        top.addView(modelState)
+        modelCard.addView(top)
+        status = ChispaUi.label(this, "Comprobando modelo instalado...", 12f, ChispaUi.MUTED)
+        modelCard.addView(status, LinearLayout.LayoutParams(-1, -2).apply {
+            topMargin = dp(7)
+        })
+        progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            isIndeterminate = false
+            max = 100
+            progress = 0
+            visibility = View.GONE
+            progressTintList = ColorStateList.valueOf(ChispaUi.ACCENT)
+            progressBackgroundTintList = ColorStateList.valueOf(ChispaUi.OUTLINE)
+        }
+        modelCard.addView(progressBar, LinearLayout.LayoutParams(-1, dp(5)).apply {
+            topMargin = dp(9)
+        })
+        modelButton = ChispaUi.button(this, "Preparando...", primary = true).apply {
+            setOnClickListener { onModelButton() }
+        }
+        modelCard.addView(modelButton, LinearLayout.LayoutParams(-1, dp(45)).apply {
+            topMargin = dp(11)
+        })
+
+        val conversationTitle = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(19), dp(3), dp(19), dp(8))
+        }
+        conversationTitle.addView(ChispaUi.label(this, "CONVERSACIÓN", 11f, ChispaUi.MUTED, true),
+            LinearLayout.LayoutParams(0, -2, 1f))
+        conversationTitle.addView(ChispaUi.label(this, "Privada · en el teléfono", 11f, ChispaUi.MUTED))
+        root.addView(conversationTitle)
+
+        scroll = ScrollView(this).apply {
+            isFillViewport = true
+            clipToPadding = false
+            setPadding(dp(13), dp(4), dp(13), dp(9))
+        }
+        history = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(0, 0, 0, dp(14))
+        }
+        scroll.addView(history)
+        root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+
+        val composer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(13), dp(9), dp(13), dp(12))
+            background = ChispaUi.background(this@MainActivity, ChispaUi.SURFACE, 19)
+        }
+        root.addView(composer, LinearLayout.LayoutParams(-1, -2).apply {
+            setMargins(dp(8), 0, dp(8), dp(7))
+        })
+        val modeRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
         analysisMode = CheckBox(this).apply {
-            text = "Análisis en 2 etapas (más lento, más detallado)"
-            textSize = 13f
-            setTextColor(Color.rgb(194, 229, 239))
+            text = "Analizar con más detalle"
+            textSize = 12f
+            setTextColor(ChispaUi.MUTED)
+            buttonTintList = ColorStateList.valueOf(ChispaUi.ACCENT)
             isChecked = prefs().getBoolean("analysis_mode", false)
             setOnCheckedChangeListener { _, enabled ->
                 prefs().edit().putBoolean("analysis_mode", enabled).apply()
             }
+            minHeight = dp(38)
         }
-        root.addView(analysisMode)
-        val manageRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        manageRow.addView(Button(this).apply {
-            text = "Respaldar GGUF"; textSize = 10f
-            setOnClickListener { backupModel() }
-        }, LinearLayout.LayoutParams(0, dp(48), 1f))
-        manageRow.addView(Button(this).apply {
-            text = "Restaurar GGUF"; textSize = 10f
-            setOnClickListener { restoreModel() }
-        }, LinearLayout.LayoutParams(0, dp(48), 1f))
-        manageRow.addView(Button(this).apply {
-            text = "Personalidad"; textSize = 10f
-            setOnClickListener { setPersonality() }
-        }, LinearLayout.LayoutParams(0, dp(48), 1f))
-        root.addView(manageRow)
-        val memoriesRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        memoriesRow.addView(Button(this).apply {
-            text = "Exportar recuerdos"
-            textSize = 11f
-            setOnClickListener {
-                startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
-                    addCategory(Intent.CATEGORY_OPENABLE)
-                    type = "application/json"
-                    putExtra(Intent.EXTRA_TITLE, "chispa_recuerdos.json")
-                }, EXPORT_MEMORY_REQUEST)
-            }
-        }, LinearLayout.LayoutParams(0, dp(46), 1f))
-        memoriesRow.addView(Button(this).apply {
-            text = "Importar recuerdos"
-            textSize = 11f
-            setOnClickListener {
-                startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                    addCategory(Intent.CATEGORY_OPENABLE)
-                    type = "application/json"
-                }, IMPORT_MEMORY_REQUEST)
-            }
-        }, LinearLayout.LayoutParams(0, dp(46), 1f))
-        root.addView(memoriesRow)
-        scroll = ScrollView(this)
-        history = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(0, dp(10), 0, dp(6))
-        }
-        scroll.addView(history)
-        root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
-        val bottom = LinearLayout(this).apply {
+        modeRow.addView(analysisMode, LinearLayout.LayoutParams(0, dp(38), 1f))
+        composeCount = ChispaUi.label(this, "0 / 9500", 11f, ChispaUi.MUTED)
+        modeRow.addView(composeCount)
+        composer.addView(modeRow)
+
+        val composeRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
+            gravity = Gravity.BOTTOM
         }
         entry = EditText(this).apply {
-            hint = "Habla con Chispa..."
-            setTextColor(Color.WHITE)
-            setHintTextColor(Color.LTGRAY)
+            hint = "Escribe tu mensaje o una idea larga..."
+            textSize = 15f
+            setTextColor(ChispaUi.TEXT)
+            setHintTextColor(ChispaUi.MUTED)
             setSingleLine(false)
             minLines = 2
-            maxLines = 7
+            maxLines = 6
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or
                 InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
-            gravity = Gravity.TOP
+            gravity = Gravity.TOP or Gravity.START
             imeOptions = EditorInfo.IME_FLAG_NO_ENTER_ACTION
+            background = ChispaUi.background(this@MainActivity, ChispaUi.BACKGROUND, 13, true)
+            setPadding(dp(13), dp(11), dp(13), dp(11))
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
+                    val n = s?.length ?: 0
+                    composeCount.text = "$n / 9500"
+                    composeCount.setTextColor(if (n > 9500) Color.rgb(248, 144, 145) else ChispaUi.MUTED)
+                }
+                override fun afterTextChanged(s: Editable?) {}
+            })
         }
-        bottom.addView(entry, LinearLayout.LayoutParams(0, -2, 1f))
-        bottom.addView(Button(this).apply {
-            text = "Parar"
-            setOnClickListener { generationJob?.cancel() }
-        })
-        bottom.addView(Button(this).apply {
-            text = "Enviar"
+        composeRow.addView(entry, LinearLayout.LayoutParams(0, -2, 1f))
+        val actions = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(8), 0, 0, 0)
+        }
+        sendButton = ChispaUi.button(this, "➤", true).apply {
+            textSize = 19f
+            contentDescription = "Enviar mensaje"
             setOnClickListener { send() }
-        })
-        root.addView(bottom)
-        memory.messages().forEach { addBubble(it) }
-        if (history.childCount == 0) {
-            addBubble("Chispa: ¡Hola! Puedes descargar mi IA y hablar conmigo sin internet después.")
         }
+        actions.addView(sendButton, LinearLayout.LayoutParams(dp(56), dp(49)))
+        stopButton = ChispaUi.button(this, "■").apply {
+            textSize = 16f
+            contentDescription = "Detener generación"
+            visibility = View.GONE
+            setOnClickListener { generationJob?.cancel() }
+        }
+        actions.addView(stopButton, LinearLayout.LayoutParams(dp(56), dp(44)).apply {
+            topMargin = dp(4)
+        })
+        composeRow.addView(actions)
+        composer.addView(composeRow)
+
+        val previous = memory.messages()
+        if (previous.isEmpty()) showWelcome()
+        else previous.forEach { addBubble(it) }
+
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 12)
@@ -203,26 +279,135 @@ class MainActivity : Activity() {
         if (!downloaded() && prefs().getLong("download_id", -1L) >= 0L) watchDownload()
     }
 
+    private fun setGenerationUi(active: Boolean) {
+        sendButton.isEnabled = !active
+        stopButton.visibility = if (active) View.VISIBLE else View.GONE
+        analysisMode.isEnabled = !active
+    }
+
+    private fun showWelcome() {
+        val welcome = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(dp(18), dp(24), dp(18), dp(22))
+            background = ChispaUi.background(this@MainActivity, ChispaUi.SURFACE, 19, true)
+        }
+        val portrait = ChispaUi.avatar(this)
+        welcome.addView(portrait, LinearLayout.LayoutParams(dp(68), dp(68)).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+        })
+        welcome.addView(ChispaUi.label(this, "¡Hola, estoy aquí!", 20f, ChispaUi.TEXT, true).apply {
+            gravity = Gravity.CENTER
+        }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
+        welcome.addView(ChispaUi.label(this,
+            "Soy Chispa, tu compañero local. Puedes conversar, guardar notas o pedir un recordatorio.",
+            13f, ChispaUi.MUTED).apply {
+            gravity = Gravity.CENTER
+            setLineSpacing(dp(3).toFloat(), 1f)
+        }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(7) })
+        val examples = listOf("¡Hola!" to "hola",
+            "Mis notas" to "mis notas",
+            "Batería" to "batería",
+            "Ayuda" to "ayuda")
+        for (pair in examples.chunked(2)) {
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            for ((caption, command) in pair) {
+                row.addView(ChispaUi.button(this, caption).apply {
+                    setOnClickListener {
+                        entry.setText(command)
+                        send()
+                    }
+                }, LinearLayout.LayoutParams(0, dp(45), 1f).apply {
+                    setMargins(dp(3), dp(3), dp(3), dp(3))
+                })
+            }
+            welcome.addView(row, LinearLayout.LayoutParams(-1, -2).apply {
+                topMargin = dp(4)
+            })
+        }
+        history.addView(welcome, LinearLayout.LayoutParams(-1, -2).apply {
+            setMargins(0, dp(8), 0, 0)
+        })
+    }
+
     private fun addBubble(message: String): TextView {
         val isUser = message.startsWith("Tú:")
-        val container = LinearLayout(this).apply {
+        val body = message.removePrefix(if (isUser) "Tú:" else "Chispa:").trimStart()
+        val line = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
             gravity = if (isUser) Gravity.END else Gravity.START
-            setPadding(0, dp(5), 0, dp(5))
+            setPadding(0, dp(7), 0, dp(7))
         }
-        val bubble = TextView(this).apply {
-            text = message
-            textSize = 15f
-            setTextColor(Color.WHITE)
-            setPadding(dp(13), dp(10), dp(13), dp(10))
-            background = round(if (isUser) Color.rgb(24, 91, 119) else Color.rgb(27, 44, 72))
+        if (!isUser) {
+            line.addView(ChispaUi.avatar(this), LinearLayout.LayoutParams(dp(30), dp(30)).apply {
+                rightMargin = dp(6)
+                topMargin = dp(16)
+            })
         }
-        container.addView(bubble, LinearLayout.LayoutParams(-2, -2).apply {
-            val maxWidth = (resources.displayMetrics.widthPixels * 0.87).toInt()
-            bubble.maxWidth = maxWidth
+        val stack = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        stack.addView(ChispaUi.label(this, if (isUser) "TÚ" else "CHISPA", 10f,
+            ChispaUi.MUTED, true).apply {
+            gravity = if (isUser) Gravity.END else Gravity.START
+        }, LinearLayout.LayoutParams(-1, -2).apply {
+            bottomMargin = dp(5)
+            leftMargin = dp(7)
+            rightMargin = dp(7)
         })
-        history.addView(container)
+        val bubble = ChispaUi.label(this, "", 15f, ChispaUi.TEXT).apply {
+            background = ChispaUi.background(this@MainActivity,
+                if (isUser) ChispaUi.USER else ChispaUi.SURFACE_ALT, 17)
+            setPadding(dp(13), dp(12), dp(13), dp(12))
+            setLineSpacing(dp(3).toFloat(), 1.04f)
+            maxWidth = (resources.displayMetrics.widthPixels * 0.79).toInt()
+            text = ChispaUi.markdown(body)
+        }
+        stack.addView(bubble)
+        line.addView(stack, LinearLayout.LayoutParams(-2, -2))
+        history.addView(line)
         scroll.post { scroll.fullScroll(ScrollView.FOCUS_DOWN) }
         return bubble
+    }
+
+    private fun displayAnswer(target: TextView, full: String) {
+        target.text = ChispaUi.markdown(full.removePrefix("Chispa:").trimStart())
+    }
+
+    private fun showToolsMenu() {
+        val entries = arrayOf(
+            "Mostrar personaje flotante",
+            "Ocultar personaje flotante",
+            "Respaldar modelo Qwen (.gguf)",
+            "Restaurar modelo Qwen",
+            "Exportar conversaciones y notas",
+            "Importar conversaciones y notas",
+            "Editar personalidad",
+            "Acerca de Chispa"
+        )
+        AlertDialog.Builder(this)
+            .setTitle("Herramientas de Chispa")
+            .setItems(entries) { _, which ->
+                when (which) {
+                    0 -> startOverlay()
+                    1 -> stopService(Intent(this, OverlayService::class.java))
+                    2 -> backupModel()
+                    3 -> restoreModel()
+                    4 -> startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                        type = "application/json"
+                        putExtra(Intent.EXTRA_TITLE, "chispa_recuerdos.json")
+                    }, EXPORT_MEMORY_REQUEST)
+                    5 -> startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                        type = "application/json"
+                    }, IMPORT_MEMORY_REQUEST)
+                    6 -> setPersonality()
+                    7 -> AlertDialog.Builder(this)
+                        .setTitle("Chispa Local")
+                        .setMessage("Asistente experimental en Android, con Qwen 1.5B y memoria local. El modelo se ejecuta en el teléfono una vez descargado. Algunas funciones aún son prototipos.")
+                        .setPositiveButton("Entendido", null).show()
+                }
+            }
+            .show()
     }
 
     private fun localCommand(msg: String): Boolean {
