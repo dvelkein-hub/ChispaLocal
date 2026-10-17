@@ -59,6 +59,8 @@ class MainActivity : Activity() {
     private var generationJob: Job? = null
     private val BACKUP_REQUEST = 601
     private val RESTORE_REQUEST = 602
+    private val EXPORT_MEMORY_REQUEST = 603
+    private val IMPORT_MEMORY_REQUEST = 604
     private val ui = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val handler = Handler(Looper.getMainLooper())
     private var pollDownload: Runnable? = null
@@ -133,6 +135,29 @@ class MainActivity : Activity() {
             setOnClickListener { setPersonality() }
         }, LinearLayout.LayoutParams(0, dp(48), 1f))
         root.addView(manageRow)
+        val memoriesRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        memoriesRow.addView(Button(this).apply {
+            text = "Exportar recuerdos"
+            textSize = 11f
+            setOnClickListener {
+                startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "application/json"
+                    putExtra(Intent.EXTRA_TITLE, "chispa_recuerdos.json")
+                }, EXPORT_MEMORY_REQUEST)
+            }
+        }, LinearLayout.LayoutParams(0, dp(46), 1f))
+        memoriesRow.addView(Button(this).apply {
+            text = "Importar recuerdos"
+            textSize = 11f
+            setOnClickListener {
+                startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    type = "application/json"
+                }, IMPORT_MEMORY_REQUEST)
+            }
+        }, LinearLayout.LayoutParams(0, dp(46), 1f))
+        root.addView(memoriesRow)
         scroll = ScrollView(this)
         history = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -475,7 +500,29 @@ class MainActivity : Activity() {
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         val uri = data?.data ?: return
-        if (resultCode != Activity.RESULT_OK || (requestCode != BACKUP_REQUEST && requestCode != RESTORE_REQUEST)) return
+        if (resultCode != Activity.RESULT_OK) return
+        if (requestCode == EXPORT_MEMORY_REQUEST || requestCode == IMPORT_MEMORY_REQUEST) {
+            if (working) return
+            working = true
+            status.text = "Procesando respaldo de notas y conversaciones..."
+            ui.launch {
+                try {
+                    val count = if (requestCode == EXPORT_MEMORY_REQUEST)
+                        MemoryVault.backup(this@MainActivity, uri)
+                    else MemoryVault.restore(this@MainActivity, uri)
+                    status.text = "Recuerdos " +
+                        (if (requestCode == EXPORT_MEMORY_REQUEST) "exportados: " else "restaurados: ") + count
+                    if (requestCode == IMPORT_MEMORY_REQUEST) {
+                        history.removeAllViews()
+                        memory.messages().forEach { addBubble(it) }
+                    }
+                } catch(e: Exception) {
+                    status.text = "Error de recuerdos: " + (e.message ?: "desconocido")
+                } finally { working = false }
+            }
+            return
+        }
+        if (requestCode != BACKUP_REQUEST && requestCode != RESTORE_REQUEST) return
         if (working) return
         working = true
         modelButton.isEnabled = false
