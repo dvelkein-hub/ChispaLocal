@@ -10,14 +10,14 @@ import org.json.JSONObject
 object MemoryVault {
  suspend fun backup(ctx:Context,uri:Uri):Int=withContext(Dispatchers.IO){
   LocalMemory(ctx).use{db->
-   val messages=db.messages()
+   val messages=db.allMessages()
    val notes=db.notes()
    val json=JSONObject()
     .put("schema",1)
     .put("messages",JSONArray(messages))
     .put("notes",JSONArray(notes))
     .toString(2)
-   requireNotNull(ctx.contentResolver.openOutputStream(uri,"w")).bufferedWriter().use{
+   requireNotNull(ctx.contentResolver.openOutputStream(uri,"w")).writer(Charsets.UTF_8).buffered().use{
     it.write(json)
    }
    messages.size+notes.size
