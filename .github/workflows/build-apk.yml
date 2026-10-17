@@ -5,34 +5,48 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: chispa-android-build
+  cancel-in-progress: true
 jobs:
   android:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 65
     steps:
       - uses: actions/checkout@v4
+      - name: Obtener motor oficial llama.cpp
+        shell: bash
+        run: |
+          mkdir -p third_party
+          git clone -q https://github.com/ggml-org/llama.cpp third_party/llama.cpp
+          git -C third_party/llama.cpp checkout -q 10b8b7553494f3638da7668cf17cac089229122a
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path("third_party/llama.cpp/examples/llama.android/lib/src/main/cpp/ai_chat.cpp")
+          txt = p.read_text()
+          old = "DEFAULT_CONTEXT_SIZE    = 8192"
+          assert old in txt, "El API nativo cambió: revisar versión"
+          p.write_text(txt.replace(old, "DEFAULT_CONTEXT_SIZE    = 2048"))
+          PY
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-      - name: Instalar SDK Android 35
+      - name: Instalar SDK, NDK y CMake
         shell: bash
         run: |
           set -euo pipefail
-          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDK_ROOT="$ANDROID_HOME"
           SDK_MANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager -print -quit)"
-          if [ -z "$SDK_MANAGER" ]; then
-            echo "No se encontró sdkmanager en $SDK_ROOT"
-            exit 1
-          fi
-          "$SDK_MANAGER" --sdk_root="$SDK_ROOT" --install "platforms;android-35" "build-tools;35.0.0"
+          test -n "$SDK_MANAGER"
+          "$SDK_MANAGER" --sdk_root="$SDK_ROOT" --install "platforms;android-36" "build-tools;36.0.0" "ndk;29.0.13113456" "cmake;3.31.6"
       - uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.11.1'
-      - name: Compilar APK
-        run: gradle :app:assembleDebug --no-daemon --stacktrace
+          gradle-version: '8.14.3'
+      - name: Compilar APK ARM64 con IA local
+        run: gradle :app:assembleDebug --no-daemon --max-workers=2 --stacktrace
       - uses: actions/upload-artifact@v4
         with:
-          name: ChispaLocal-v0.1-APK
+          name: ChispaLocal-v0.2-Qwen-APK
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
