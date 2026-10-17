@@ -39,6 +39,7 @@ jobs:
           SDK_ROOT="$ANDROID_HOME"
           SDK_MANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager -print -quit)"
           test -n "$SDK_MANAGER"
+          yes | "$SDK_MANAGER" --sdk_root="$SDK_ROOT" --licenses > /dev/null || true
           "$SDK_MANAGER" --sdk_root="$SDK_ROOT" --install "platforms;android-36" "build-tools;36.0.0" "ndk;29.0.13113456" "cmake;3.31.6"
       - uses: gradle/actions/setup-gradle@v4
         with:
