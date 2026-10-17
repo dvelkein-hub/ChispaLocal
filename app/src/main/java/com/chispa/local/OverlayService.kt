@@ -26,11 +26,12 @@ class OverlayService: Service(){
         else startForeground(50,notice)
         if(!android.provider.Settings.canDrawOverlays(this)){stopSelf();return}
         manager=getSystemService(WINDOW_SERVICE) as WindowManager
-        val params=WindowManager.LayoutParams(dp(82),dp(82),WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+        val saved=getSharedPreferences("chispa_float",MODE_PRIVATE)
+        val params=WindowManager.LayoutParams(dp(66),dp(66),WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,PixelFormat.TRANSLUCENT).apply{
             gravity=Gravity.TOP or Gravity.START
-            x=resources.displayMetrics.widthPixels-dp(104)
-            y=dp(175)
+            x=saved.getInt("x",resources.displayMetrics.widthPixels-dp(92))
+            y=saved.getInt("y",dp(175))
         }
         val face=object:View(this){
             val paint=Paint(Paint.ANTI_ALIAS_FLAG)
@@ -62,6 +63,13 @@ class OverlayService: Service(){
                     };true
                 }
                 MotionEvent.ACTION_UP->{
+                    if(moved){
+                        val screen=resources.displayMetrics.widthPixels
+                        params.x=if(params.x+dp(33)<screen/2) dp(6) else screen-dp(72)
+                        params.y=params.y.coerceIn(dp(40),resources.displayMetrics.heightPixels-dp(132))
+                        manager.updateViewLayout(face,params)
+                        saved.edit().putInt("x",params.x).putInt("y",params.y).apply()
+                    }
                     if(!moved) startActivity(Intent(this,MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP))
                     true
                 }
