@@ -25,9 +25,9 @@ object MemoryVault {
  }
  suspend fun restore(ctx:Context,uri:Uri):Int=withContext(Dispatchers.IO){
   val raw=requireNotNull(ctx.contentResolver.openInputStream(uri)).use{stream->
-   stream.readNBytes(1024*1024+1)
+   stream.readNBytes(4*1024*1024+1)
   }
-  require(raw.size<=1024*1024){"Respaldo demasiado grande (límite 1 MB)"}
+  require(raw.size<=4*1024*1024){"Respaldo demasiado grande (límite 4 MB)"}
   val data=JSONObject(String(raw,Charsets.UTF_8))
   require(data.optInt("schema")==1){"Formato de respaldo incompatible"}
   val m=data.getJSONArray("messages")
