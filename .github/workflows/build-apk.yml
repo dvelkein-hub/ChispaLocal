@@ -27,6 +27,26 @@ jobs:
           old = "DEFAULT_CONTEXT_SIZE    = 8192"
           assert old in txt, "El API nativo cambió: revisar versión"
           p.write_text(txt.replace(old, "DEFAULT_CONTEXT_SIZE    = 2048"))
+          lib_gradle = Path("third_party/llama.cpp/examples/llama.android/lib/build.gradle.kts")
+          config = lib_gradle.read_text()
+          for before, after in [
+              ("-DGGML_CPU_ALL_VARIANTS=ON", "-DGGML_CPU_ALL_VARIANTS=OFF"),
+              ("-DGGML_BACKEND_DL=ON", "-DGGML_BACKEND_DL=OFF"),
+              ("-DCMAKE_VERBOSE_MAKEFILE=ON", "-DCMAKE_VERBOSE_MAKEFILE=OFF"),
+              ("-DCMAKE_MESSAGE_LOG_LEVEL=DEBUG", "-DCMAKE_MESSAGE_LOG_LEVEL=STATUS"),
+          ]:
+              assert before in config, "Cambio upstream: " + before
+              config = config.replace(before, after)
+          lib_gradle.write_text(config)
+          native_cmake = Path("third_party/llama.cpp/examples/llama.android/lib/src/main/cpp/CMakeLists.txt")
+          native_cfg = native_cmake.read_text()
+          for before, after in [
+              ("set(GGML_CPU_KLEIDIAI ON)", "set(GGML_CPU_KLEIDIAI OFF)"),
+              ("set(GGML_OPENMP ON)", "set(GGML_OPENMP OFF)"),
+          ]:
+              assert before in native_cfg, "Cambio upstream: " + before
+              native_cfg = native_cfg.replace(before, after)
+          native_cmake.write_text(native_cfg)
           PY
       - uses: actions/setup-java@v4
         with:
@@ -45,7 +65,7 @@ jobs:
         with:
           gradle-version: '8.14.3'
       - name: Compilar APK ARM64 con IA local
-        run: gradle :app:assembleDebug --no-daemon --max-workers=2 --stacktrace
+        run: gradle :app:assembleDebug --no-daemon --max-workers=4 --stacktrace
       - uses: actions/upload-artifact@v4
         with:
           name: ChispaLocal-v0.2-Qwen-APK
