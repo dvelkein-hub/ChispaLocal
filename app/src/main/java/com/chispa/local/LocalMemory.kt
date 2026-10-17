@@ -25,6 +25,17 @@ class LocalMemory(ctx:Context):SQLiteOpenHelper(ctx,"chispa.db",null,2){
   }
   return out.reversed()
  }
+ fun allMessages():List<String>{
+  val out=mutableListOf<String>()
+  readableDatabase.rawQuery("SELECT text FROM messages ORDER BY id DESC LIMIT 1500",null).use{c->
+   while(c.moveToNext())out.add(c.getString(0))
+  }
+  return out.reversed()
+ }
+ fun clearUserData(){
+  writableDatabase.execSQL("DELETE FROM messages")
+  writableDatabase.execSQL("DELETE FROM notes")
+ }
  fun notes():List<String>{
   val out=mutableListOf<String>()
   readableDatabase.rawQuery("SELECT text FROM notes ORDER BY id DESC LIMIT 25",null).use{c->
