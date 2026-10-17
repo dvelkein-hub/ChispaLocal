@@ -17,8 +17,10 @@ import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
 import android.view.Gravity
+import android.text.InputType
 import android.view.inputmethod.EditorInfo
 import android.widget.Button
+import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -51,6 +53,7 @@ class MainActivity : Activity() {
     private lateinit var memory: LocalMemory
     private lateinit var modelButton: Button
     private lateinit var status: TextView
+    private lateinit var analysisMode: CheckBox
     private val ui = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val handler = Handler(Looper.getMainLooper())
     private var pollDownload: Runnable? = null
@@ -85,8 +88,8 @@ class MainActivity : Activity() {
             setTextColor(Color.WHITE)
             setPadding(dp(5), dp(4), dp(5), dp(7))
         }
-        root.addView(header("✦ CHISPA LOCAL  •  v0.2", 23f))
-        status = header("Motor Qwen 1.5B • offline tras la descarga", 12f)
+        root.addView(header("✦ CHISPA LOCAL  •  v0.3", 23f))
+        status = header("Qwen 1.5B • Contexto 6144 • Ideas largas", 12f)
         status.setTextColor(Color.rgb(103, 221, 221))
         root.addView(status)
         modelButton = Button(this).apply { setOnClickListener { onModelButton() } }
@@ -101,6 +104,16 @@ class MainActivity : Activity() {
             setOnClickListener { stopService(Intent(this@MainActivity, OverlayService::class.java)) }
         }, LinearLayout.LayoutParams(0, dp(52), 1f))
         root.addView(buttons)
+        analysisMode = CheckBox(this).apply {
+            text = "Análisis en 2 etapas (más lento, más detallado)"
+            textSize = 13f
+            setTextColor(Color.rgb(194, 229, 239))
+            isChecked = prefs().getBoolean("analysis_mode", false)
+            setOnCheckedChangeListener { _, enabled ->
+                prefs().edit().putBoolean("analysis_mode", enabled).apply()
+            }
+        }
+        root.addView(analysisMode)
         scroll = ScrollView(this)
         history = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -116,13 +129,15 @@ class MainActivity : Activity() {
             hint = "Habla con Chispa..."
             setTextColor(Color.WHITE)
             setHintTextColor(Color.LTGRAY)
-            setSingleLine(true)
-            imeOptions = EditorInfo.IME_ACTION_SEND
-            setOnEditorActionListener { _, action, _ ->
-                if (action == EditorInfo.IME_ACTION_SEND) { send(); true } else false
-            }
+            setSingleLine(false)
+            minLines = 2
+            maxLines = 7
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+                InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            gravity = Gravity.TOP
+            imeOptions = EditorInfo.IME_FLAG_NO_ENTER_ACTION
         }
-        bottom.addView(entry, LinearLayout.LayoutParams(0, dp(56), 1f))
+        bottom.addView(entry, LinearLayout.LayoutParams(0, -2, 1f))
         bottom.addView(Button(this).apply {
             text = "Enviar"
             setOnClickListener { send() }
@@ -178,6 +193,13 @@ class MainActivity : Activity() {
             Toast.makeText(this, "Espera a que Chispa termine su respuesta", Toast.LENGTH_SHORT).show()
             return
         }
+        if (modelReady && msg.length > 9500) {
+            AlertDialog.Builder(this).setTitle("Idea demasiado larga para esta versión")
+                .setMessage("El texto supera el límite seguro de 9500 caracteres. Divídelo en varias partes; Chispa no debe recortar requisitos sin avisarte.")
+                .setPositiveButton("Entendido", null).show()
+            return
+        }
+        val deep = modelReady && (analysisMode.isChecked || msg.length >= 500)
         entry.setText("")
         val request = "Tú: " + msg
         addBubble(request)
@@ -189,16 +211,41 @@ class MainActivity : Activity() {
             return
         }
 
-        val answerBubble = addBubble("Chispa: Pensando...")
+        val answerBubble = addBubble(if (deep) "Chispa: Analizando objetivos y condiciones..." else "Chispa: Pensando...")
         working = true
         modelButton.isEnabled = false
+        analysisMode.isEnabled = false
         val begin = SystemClock.elapsedRealtime()
         ui.launch {
             val output = StringBuilder()
             var updatedAt = 0L
             try {
                 val ai = requireNotNull(engine) { "La IA no está disponible" }
-                ai.sendUserPrompt(msg, predictLength = 160).collect { chunk ->
+                var notes = ""
+                if (deep) {
+                    status.text = "Paso 1/2 • Identificando restricciones..."
+                    val plan = StringBuilder()
+                    val analysisPrompt = """Analiza la solicitud siguiente. No respondas al usuario todavía.
+                        |Identifica objetivos, datos, restricciones, tiempos y posibles contradicciones.
+                        |No inventes información. Escribe notas breves y verificables.
+                        |
+                        |SOLICITUD:
+                        |$msg""".trimMargin()
+                    ai.sendUserPrompt(analysisPrompt, predictLength = 224).collect { part ->
+                        plan.append(part)
+                    }
+                    notes = plan.toString().take(1600)
+                    answerBubble.text = "Chispa: Preparando la respuesta..."
+                }
+                val finalPrompt = if (deep) {
+                    """Responde ahora a la solicitud original, sin omitir ningún requisito.
+                       |Revisa tus cálculos y condiciones. Si no estás seguro, dilo.
+                       |Presenta una solución ordenada con explicaciones útiles.
+                       |Apóyate en estas notas de análisis:
+                       |$notes""".trimMargin()
+                } else msg
+                status.text = if (deep) "Paso 2/2 • Desarrollando idea..." else "Generando respuesta..."
+                ai.sendUserPrompt(finalPrompt, predictLength = if (deep) 544 else 320).collect { chunk ->
                     output.append(chunk)
                     val now = SystemClock.elapsedRealtime()
                     if (now - updatedAt > 85L) {
@@ -210,13 +257,15 @@ class MainActivity : Activity() {
                 val answer = output.toString().trim().ifEmpty { "No pude generar una respuesta." }
                 answerBubble.text = "Chispa: " + answer
                 memory.addMessage("Chispa: " + answer)
-                status.text = "IA local activa • Última respuesta: " +
-                    String.format(Locale.US, "%.1f s", (SystemClock.elapsedRealtime() - begin) / 1000.0)
+                status.text = "IA local • " + (if (deep) "Análisis" else "Normal") +
+                    " • " + String.format(Locale.US, "%.1f s", (SystemClock.elapsedRealtime() - begin) / 1000.0) +
+                    " • " + answer.length + " caracteres"
             } catch (e: Exception) {
                 answerBubble.text = "Chispa: Ocurrió un error al generar: " + (e.message ?: "desconocido")
                 status.text = "Error de generación. Intenta reiniciar el modelo."
             } finally {
                 working = false
+                analysisMode.isEnabled = true
                 modelButton.isEnabled = true
             }
         }
